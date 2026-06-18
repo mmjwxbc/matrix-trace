@@ -1,0 +1,25 @@
+{
+  "name": "@matrix-trace/pi-worker-poc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "cf:types": "wrangler types",
+    "cf:check": "wrangler deploy --dry-run",
+    "dev": "wrangler dev",
+    "cf:dry-run": "wrangler deploy --dry-run",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:prod": "wrangler deploy --env production"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "^0.79.4",
+    "@earendil-works/pi-ai": "^0.79.4",
+    "@earendil-works/pi-coding-agent": "^0.79.4",
+    "@earendil-works/pi-tui": "^0.79.4"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "wrangler": "4.20.3"
+  }
+}

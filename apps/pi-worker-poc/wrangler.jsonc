@@ -1,0 +1,49 @@
+{
+  "$schema": "../../tmp/pi/node_modules/wrangler/config-schema.json",
+  "name": "pi-worker-poc",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "APP_ENV": "production",
+    "PI_SESSION_NAMESPACE": "pi-worker-poc"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSION_DO", "class_name": "SessionDurableObject" },
+      { "name": "SESSION_REGISTRY_DO", "class_name": "SessionRegistryDurableObject" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SessionDurableObject"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["SessionRegistryDurableObject"]
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "pi-worker-poc-staging",
+      "vars": {
+        "APP_ENV": "staging",
+        "PI_SESSION_NAMESPACE": "pi-worker-poc-staging"
+      }
+    },
+    "production": {
+      "name": "pi-worker-poc",
+      "vars": {
+        "APP_ENV": "production",
+        "PI_SESSION_NAMESPACE": "pi-worker-poc"
+      }
+    }
+  }
+}
