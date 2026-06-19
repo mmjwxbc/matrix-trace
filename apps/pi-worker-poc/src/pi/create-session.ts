@@ -1,6 +1,17 @@
 import { buildTravelSystemPrompt } from "./prompt-loader.ts";
 import { createTravelHelloTool } from "../tools/travel-hello.ts";
 import type { PiRuntimeEnv } from "../env.ts";
+import { getModel, type Api, type Model } from "@earendil-works/pi-ai";
+import {
+  AuthStorage,
+  createAgentSession,
+  createExtensionRuntime,
+  DefaultResourceLoader,
+  getAgentDir,
+  ModelRegistry,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 
 export interface PiSessionConfig {
   cwd: string;
@@ -51,10 +62,6 @@ export async function createPiSessionConfig(cwd: string): Promise<PiSessionConfi
   };
 }
 
-export async function loadPiSdk() {
-  return import("@earendil-works/pi-coding-agent");
-}
-
 export function formatPiError(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
@@ -88,10 +95,15 @@ export function createPiRuntimeOptionsFromEnv(env: PiRuntimeEnv): PiRuntimeOptio
 
 export async function probePiSdk(): Promise<PiSdkProbeResult> {
   try {
-    const sdk = await loadPiSdk();
     return {
       ok: true,
-      exportKeys: Object.keys(sdk).slice(0, 12)
+      exportKeys: [
+        "AuthStorage",
+        "ModelRegistry",
+        "SessionManager",
+        "SettingsManager",
+        "createAgentSession"
+      ]
     };
   } catch (error) {
     return {
@@ -101,63 +113,103 @@ export async function probePiSdk(): Promise<PiSdkProbeResult> {
   }
 }
 
+function applyProviderOverrides(registry: ModelRegistry, overrides: PiRuntimeOptions["providerOverrides"]): void {
+  for (const [providerName, override] of Object.entries(overrides)) {
+    try {
+      registry.registerProvider(providerName, override);
+    } catch {
+      // Built-in provider — override via setRuntimeApiKey + baseUrl on the model instead.
+    }
+  }
+}
+
+function resolveSelectedModel(
+  registry: ModelRegistry,
+  selection: PiRuntimeOptions["modelSelection"]
+): Model<Api> | undefined {
+  if (selection?.provider && selection.modelId) {
+    const exact = registry.find(selection.provider, selection.modelId);
+    if (exact) return exact;
+  }
+  if (selection?.provider) {
+    const all = registry.getAll();
+    const match = all.find((m) => m.provider === selection.provider);
+    if (match) return match;
+  }
+  return registry.getAll()[0] ?? (getModel("anthropic", "claude-sonnet-4-5") as Model<Api> | undefined);
+}
+
+function applyRuntimeApiKeys(authStorage: AuthStorage, auth: PiRuntimeOptions["auth"]): void {
+  for (const [provider, cred] of Object.entries(auth)) {
+    if (cred.type === "api_key") {
+      authStorage.setRuntimeApiKey(provider, cred.key);
+    }
+  }
+}
+
 export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): Promise<LivePiSessionResult> {
-  const sdk = await loadPiSdk();
-  const { AuthStorage, ModelRegistry, SessionManager, SettingsManager, createAgentSession, createExtensionRuntime } = sdk;
   const config = await createPiSessionConfig(cwd);
   const runtimeOptions = createPiRuntimeOptionsFromEnv(env);
-  const authStorage = AuthStorage.inMemory(runtimeOptions.auth);
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
-  const settingsManager = SettingsManager.inMemory({
+
+  // Mirrors examples/sdk/12-full-control.ts:
+  // - AuthStorage.create() defaults to ~/.pi/agent/auth.json but we inject keys via setRuntimeApiKey
+  //   so nothing is persisted to disk in the Workers runtime.
+  // - ModelRegistry.create() loads built-in models; provider base-url overrides are applied after.
+  // - DefaultResourceLoader discovers skills/extensions/prompts/themes from cwd + agentDir;
+  //   we override getSystemPrompt to inject our travel prompt.
+  const authStorage = AuthStorage.create();
+  applyRuntimeApiKeys(authStorage, runtimeOptions.auth);
+
+  const modelRegistry = ModelRegistry.create(authStorage);
+  applyProviderOverrides(modelRegistry, runtimeOptions.providerOverrides);
+
+  const settingsManager = SettingsManager.create(cwd);
+  settingsManager.applyOverrides({
     compaction: { enabled: false },
     retry: { enabled: false }
   });
 
-  const resourceLoader = {
-    getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
-    getSkills: () => ({ skills: [], diagnostics: [] }),
-    getPrompts: () => ({ prompts: [], diagnostics: [] }),
-    getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => config.systemPrompt,
-    getAppendSystemPrompt: () => [],
-    extendResources: () => {},
-    reload: async () => {}
-  };
-
-  for (const [providerName, override] of Object.entries(runtimeOptions.providerOverrides)) {
-    modelRegistry.registerProvider(providerName, override);
-  }
-
-  let selectedModel: unknown;
-  const requestedProvider = runtimeOptions.modelSelection?.provider;
-  const requestedModelId = runtimeOptions.modelSelection?.modelId;
-  if (requestedProvider && requestedModelId) {
-    selectedModel = modelRegistry.find(requestedProvider, requestedModelId);
-  } else if (requestedProvider) {
-    selectedModel = modelRegistry.getAll().find((model) => model.provider === requestedProvider);
-  }
-
-  return createAgentSession({
+  const resourceLoader = new DefaultResourceLoader({
     cwd: config.cwd,
-    agentDir: "/tmp/pi-agent",
+    agentDir: getAgentDir(),
+    systemPromptOverride: () => config.systemPrompt
+  });
+  await resourceLoader.reload();
+
+  const selectedModel = resolveSelectedModel(modelRegistry, runtimeOptions.modelSelection);
+
+  const { session } = await createAgentSession({
+    cwd: config.cwd,
+    agentDir: getAgentDir(),
+    model: selectedModel,
     authStorage,
     modelRegistry,
-    model: selectedModel as never,
-    sessionManager: SessionManager.inMemory(config.cwd),
     settingsManager,
     resourceLoader,
     tools: [],
-    customTools: config.customTools
+    customTools: config.customTools,
+    sessionManager: SessionManager.inMemory(config.cwd)
   });
+
+  return {
+    session: {
+      sessionId: session.sessionId,
+      prompt: (text) => session.prompt(text),
+      dispose: () => session.dispose(),
+      getActiveToolNames: () => config.toolNames,
+      get messages() {
+        return session.state.messages;
+      }
+    }
+  };
 }
 
 export async function probePiSessionCreation(cwd: string, env: PiRuntimeEnv = {}): Promise<PiSessionProbeResult> {
   try {
-    const { session, modelFallbackMessage } = await createLivePiSession(cwd, env);
+    const { session } = await createLivePiSession(cwd, env);
     const result: PiSessionProbeResult = {
       ok: true,
-      fallback: modelFallbackMessage ?? null,
+      fallback: null,
       sessionId: session.sessionId
     };
     session.dispose();

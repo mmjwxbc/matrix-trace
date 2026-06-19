@@ -2,6 +2,7 @@ import type { Env } from "../env.ts";
 import type { SessionRegistryEntry } from "../durable/session-registry-do.ts";
 import { toLegacyAgentState, type PromptResult, type StoredSessionState } from "../lib/legacy-state.ts";
 import type { PromptRequest } from "../lib/state.ts";
+import { listMessages } from "../lib/chat-history.ts";
 
 export function createSessionId(): string {
   return crypto.randomUUID().slice(0, 12);
@@ -150,4 +151,31 @@ export async function handleDeleteSession(env: Env, sessionId: string): Promise<
     return Response.json({ detail: "Session not found" }, { status: 404 });
   }
   return Response.json({ ok: true });
+}
+
+export async function handleListMessages(env: Env, sessionId: string): Promise<Response> {
+  const exists = await hasRegistrySession(getRegistryStub(env), sessionId);
+  if (!exists) {
+    return Response.json({ detail: "Session not found" }, { status: 404 });
+  }
+  const rows = await listMessages(env, sessionId);
+  return Response.json({
+    session_id: sessionId,
+    messages: rows.map((row) => ({
+      id: row.id,
+      role: row.role,
+      seq: row.seq,
+      content: row.content_text,
+      meta: safeParse(row.meta_json, {}),
+      created_at: row.created_at
+    }))
+  });
+}
+
+function safeParse<T>(json: string, fallback: T): T {
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    return fallback;
+  }
 }

@@ -2,7 +2,7 @@ import type { Env } from "./env.ts";
 import { SessionDurableObject } from "./durable/session-do.ts";
 import { SessionRegistryDurableObject } from "./durable/session-registry-do.ts";
 import { buildSingleEventStream } from "./routes/stream.ts";
-import { handleCreateSession, handleDeleteSession, handleGetSession, handleListSessions, handlePrompt } from "./routes/sessions.ts";
+import { handleCreateSession, handleDeleteSession, handleGetSession, handleListMessages, handleListSessions, handlePrompt } from "./routes/sessions.ts";
 
 export { SessionDurableObject };
 export { SessionRegistryDurableObject };
@@ -93,6 +93,9 @@ export default {
           const body = (await request.json()) as { message: string; mode?: string; lat?: number; lng?: number };
           response = await handlePrompt(env, sessionId, body);
         }
+      } else if (request.method === "GET" && /^\/api\/sessions\/[^/]+\/messages\/?$/.test(url.pathname)) {
+        const sessionId = url.pathname.split("/")[3];
+        response = sessionId ? await handleListMessages(env, sessionId) : new Response("Not Found", { status: 404 });
       } else {
         response = new Response("Not Found", { status: 404 });
       }

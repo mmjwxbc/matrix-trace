@@ -8,6 +8,7 @@ import {
 import type { Env } from "../env.ts";
 import { applyLocationContext } from "../lib/legacy-state.ts";
 import type { PromptRequest } from "../lib/state.ts";
+import { persistTurn } from "../lib/chat-history.ts";
 
 type SessionState = {
   sessionId: string;
@@ -31,6 +32,27 @@ type SessionState = {
 };
 
 type LiveSession = Awaited<ReturnType<typeof createLivePiSession>>;
+
+function extractLastAssistantText(session: LiveSession): string {
+  const messages = (session.session as unknown as { messages?: unknown[] }).messages ?? [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i] as Record<string, unknown> | null | undefined;
+    if (!msg || msg.role !== "assistant") continue;
+    const content = msg.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      const parts: string[] = [];
+      for (const block of content) {
+        if (!block || typeof block !== "object") continue;
+        const b = block as Record<string, unknown>;
+        if (typeof b.text === "string") parts.push(b.text);
+      }
+      if (parts.length > 0) return parts.join("");
+    }
+    return "";
+  }
+  return "";
+}
 
 function defaultState(sessionId: string): SessionState {
   return {
@@ -150,6 +172,21 @@ export class SessionDurableObject {
         toolNames: session.session.getActiveToolNames()
       };
       await this.persist();
+
+      // Archive the turn to D1. Fire-and-forget via waitUntil so we don't
+      // add a DB round-trip latency to the prompt response. D1 writes are
+      // idempotent on (conversation_id, seq) only if we get that right;
+      // since seq is computed from MAX(seq)+1, retried writes can collide —
+      // acceptable for an archive, log and move on.
+      const assistantText = extractLastAssistantText(session);
+      this.stateStore.waitUntil(
+        persistTurn(this.env, {
+          conversationId: current.sessionId,
+          userMessage: body.message,
+          userMeta: { mode: body.mode, lat: body.lat, lng: body.lng },
+          assistantMessage: assistantText
+        }).catch((err) => console.error("chat-history persist failed", err))
+      );
       return {
         ok: true,
         usedPiSdk: this.state.sdkLoaded,
