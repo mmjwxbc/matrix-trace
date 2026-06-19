@@ -62,4 +62,30 @@ export class SessionRegistryDurableObject {
     const current = await this.ensureState();
     return current.sessions.some((session) => session.session_id === sessionId);
   }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/list") {
+      return Response.json(await this.listSessions());
+    }
+
+    if (request.method === "POST" && url.pathname === "/upsert") {
+      const entry = (await request.json()) as SessionRegistryEntry;
+      await this.upsertSession(entry);
+      return Response.json({ ok: true });
+    }
+
+    if (request.method === "POST" && url.pathname === "/delete") {
+      const { sessionId } = (await request.json()) as { sessionId: string };
+      return Response.json({ deleted: await this.deleteSession(sessionId) });
+    }
+
+    if (request.method === "GET" && url.pathname === "/has") {
+      const sessionId = url.searchParams.get("sessionId") ?? "";
+      return Response.json({ exists: await this.hasSession(sessionId) });
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
 }

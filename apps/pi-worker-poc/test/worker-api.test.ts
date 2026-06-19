@@ -50,6 +50,70 @@ function createEnv() {
   };
 }
 
+function createFetchOnlyEnv() {
+  const sessions = new Map<string, SessionDurableObject>();
+  const registries = new Map<string, SessionRegistryDurableObject>();
+
+  function getSessionObject(name: string) {
+    if (!sessions.has(name)) {
+      const storage = new Map<string, unknown>();
+      sessions.set(
+        name,
+        new SessionDurableObject({
+          storage: {
+            get: async (key: string) => storage.get(key),
+            put: async (key: string, value: unknown) => {
+              storage.set(key, value);
+            }
+          }
+        } as never, {} as never)
+      );
+    }
+    return sessions.get(name) as SessionDurableObject;
+  }
+
+  function getRegistryObject(name: string) {
+    if (!registries.has(name)) {
+      const storage = new Map<string, unknown>();
+      registries.set(
+        name,
+        new SessionRegistryDurableObject({
+          storage: {
+            get: async (key: string) => storage.get(key),
+            put: async (key: string, value: unknown) => {
+              storage.set(key, value);
+            }
+          }
+        } as never)
+      );
+    }
+    return registries.get(name) as SessionRegistryDurableObject;
+  }
+
+  return {
+    SESSION_DO: {
+      getByName(name: string) {
+        const obj = getSessionObject(name);
+        return {
+          fetch(request: Request) {
+            return obj.fetch(request);
+          }
+        };
+      }
+    },
+    SESSION_REGISTRY_DO: {
+      getByName(name: string) {
+        const obj = getRegistryObject(name);
+        return {
+          fetch(request: Request) {
+            return obj.fetch(request);
+          }
+        };
+      }
+    }
+  };
+}
+
 test("worker creates and fetches a session", async () => {
   const env = createEnv();
 
@@ -70,6 +134,19 @@ test("worker creates and fetches a session", async () => {
   assert.equal(typeof state.created_at, "number");
   assert.equal(typeof state.last_active, "number");
   assert.equal(state.state?.status, "done");
+});
+
+test("worker supports durable object fetch-only stubs", async () => {
+  const env = createFetchOnlyEnv();
+
+  const createRes = await worker.fetch(new Request("https://example.com/api/sessions", { method: "POST" }), env as never);
+  assert.equal(createRes.status, 200);
+  const created = (await createRes.json()) as { session_id: string };
+
+  const listRes = await worker.fetch(new Request("https://example.com/api/sessions"), env as never);
+  assert.equal(listRes.status, 200);
+  const sessions = (await listRes.json()) as Array<{ session_id: string }>;
+  assert.equal(sessions[0]?.session_id, created.session_id);
 });
 
 test("worker handles CORS preflight for api routes", async () => {

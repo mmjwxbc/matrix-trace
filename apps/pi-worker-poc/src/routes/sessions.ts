@@ -21,6 +21,77 @@ function getRegistryStub(env: Env) {
   return env.SESSION_REGISTRY_DO.getByName("global");
 }
 
+async function readJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return (await response.json()) as T;
+}
+
+async function initializeSession(stub: { fetch(request: Request): Promise<Response> }, sessionId: string) {
+  return readJson<StoredSessionState>(
+    await stub.fetch(
+      new Request("https://do/initialize", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId })
+      })
+    )
+  );
+}
+
+async function getSessionState(stub: { fetch(request: Request): Promise<Response> }) {
+  return readJson<StoredSessionState>(await stub.fetch(new Request("https://do/state")));
+}
+
+async function promptSession(stub: { fetch(request: Request): Promise<Response> }, body: PromptRequest) {
+  return readJson<PromptResult>(
+    await stub.fetch(
+      new Request("https://do/prompt", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      })
+    )
+  );
+}
+
+async function listRegistrySessions(stub: { fetch(request: Request): Promise<Response> }) {
+  return readJson<SessionRegistryEntry[]>(await stub.fetch(new Request("https://do/list")));
+}
+
+async function upsertRegistrySession(stub: { fetch(request: Request): Promise<Response> }, entry: SessionRegistryEntry) {
+  await readJson<{ ok: boolean }>(
+    await stub.fetch(
+      new Request("https://do/upsert", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(entry)
+      })
+    )
+  );
+}
+
+async function deleteRegistrySession(stub: { fetch(request: Request): Promise<Response> }, sessionId: string) {
+  const result = await readJson<{ deleted: boolean }>(
+    await stub.fetch(
+      new Request("https://do/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId })
+      })
+    )
+  );
+  return result.deleted;
+}
+
+async function hasRegistrySession(stub: { fetch(request: Request): Promise<Response> }, sessionId: string) {
+  const result = await readJson<{ exists: boolean }>(
+    await stub.fetch(new Request(`https://do/has?sessionId=${encodeURIComponent(sessionId)}`))
+  );
+  return result.exists;
+}
+
 function toRegistryEntry(state: StoredSessionState): SessionRegistryEntry {
   return {
     session_id: state.sessionId,
@@ -34,23 +105,23 @@ function toRegistryEntry(state: StoredSessionState): SessionRegistryEntry {
 export async function handleCreateSession(env: Env): Promise<Response> {
   const sessionId = createSessionId();
   const stub = getSessionStub(env, sessionId);
-  const state = (await stub.initialize(sessionId)) as StoredSessionState;
-  await getRegistryStub(env).upsertSession(toRegistryEntry(state));
+  const state = await initializeSession(stub, sessionId);
+  await upsertRegistrySession(getRegistryStub(env), toRegistryEntry(state));
   return Response.json({ session_id: sessionId });
 }
 
 export async function handleListSessions(env: Env): Promise<Response> {
-  const sessions = await getRegistryStub(env).listSessions();
+  const sessions = await listRegistrySessions(getRegistryStub(env));
   return Response.json(sessions);
 }
 
 export async function handleGetSession(env: Env, sessionId: string): Promise<Response> {
-  const exists = await getRegistryStub(env).hasSession(sessionId);
+  const exists = await hasRegistrySession(getRegistryStub(env), sessionId);
   if (!exists) {
     return Response.json({ detail: "Session not found" }, { status: 404 });
   }
   const stub = getSessionStub(env, sessionId);
-  const state = (await stub.getState()) as StoredSessionState;
+  const state = await getSessionState(stub);
   return Response.json({
     session_id: state.sessionId,
     created_at: state.createdAt,
@@ -60,21 +131,21 @@ export async function handleGetSession(env: Env, sessionId: string): Promise<Res
 }
 
 export async function handlePrompt(env: Env, sessionId: string, body: PromptRequest): Promise<Response> {
-  const exists = await getRegistryStub(env).hasSession(sessionId);
+  const exists = await hasRegistrySession(getRegistryStub(env), sessionId);
   if (!exists) {
     return Response.json({ detail: "Session not found" }, { status: 404 });
   }
   const stub = getSessionStub(env, sessionId);
-  const result = (await stub.prompt(body)) as PromptResult;
-  const state = (await stub.getState()) as StoredSessionState;
-  await getRegistryStub(env).upsertSession(toRegistryEntry(state));
+  const result = await promptSession(stub, body);
+  const state = await getSessionState(stub);
+  await upsertRegistrySession(getRegistryStub(env), toRegistryEntry(state));
   return Response.json({
     state: toLegacyAgentState(state, result)
   });
 }
 
 export async function handleDeleteSession(env: Env, sessionId: string): Promise<Response> {
-  const deleted = await getRegistryStub(env).deleteSession(sessionId);
+  const deleted = await deleteRegistrySession(getRegistryStub(env), sessionId);
   if (!deleted) {
     return Response.json({ detail: "Session not found" }, { status: 404 });
   }

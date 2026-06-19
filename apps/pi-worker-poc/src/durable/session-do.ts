@@ -187,4 +187,28 @@ export class SessionDurableObject {
       };
     }
   }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === "POST" && url.pathname === "/initialize") {
+      const { sessionId } = (await request.json()) as { sessionId: string };
+      return Response.json(await this.initialize(sessionId));
+    }
+
+    if (request.method === "GET" && url.pathname === "/state") {
+      return Response.json(await this.getState());
+    }
+
+    if (request.method === "POST" && url.pathname === "/prompt") {
+      const body = (await request.json()) as PromptRequest;
+      return Response.json(await this.prompt(body));
+    }
+
+    if (request.method === "GET" && url.pathname === "/health") {
+      return Response.json(await this.healthCheck());
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
 }
