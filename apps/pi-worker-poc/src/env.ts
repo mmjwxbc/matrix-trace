@@ -13,6 +13,7 @@ export interface PiRuntimeEnv {
 export interface Env {
   SESSION_DO: DurableObjectNamespace<SessionDurableObject>;
   SESSION_REGISTRY_DO: DurableObjectNamespace<SessionRegistryDurableObject>;
+  CORS_ALLOWED_ORIGINS?: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
   ANTHROPIC_API_KEY?: string;

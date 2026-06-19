@@ -72,6 +72,44 @@ test("worker creates and fetches a session", async () => {
   assert.equal(state.state?.status, "done");
 });
 
+test("worker handles CORS preflight for api routes", async () => {
+  const env = createEnv();
+
+  const res = await worker.fetch(
+    new Request("https://example.com/api/sessions", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://matrix-trace.pages.dev",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type"
+      }
+    }),
+    env as never
+  );
+
+  assert.equal(res.status, 204);
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://matrix-trace.pages.dev");
+  assert.equal(res.headers.get("access-control-allow-methods"), "GET,POST,DELETE,OPTIONS");
+  assert.equal(res.headers.get("access-control-allow-headers"), "content-type");
+});
+
+test("worker adds CORS headers to api responses", async () => {
+  const env = createEnv();
+
+  const res = await worker.fetch(
+    new Request("https://example.com/api/sessions", {
+      method: "POST",
+      headers: {
+        origin: "https://matrix-trace.pages.dev"
+      }
+    }),
+    env as never
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://matrix-trace.pages.dev");
+});
+
 test("worker lists and deletes sessions using the registry", async () => {
   const env = createEnv();
 
@@ -169,6 +207,7 @@ test("worker stream route emits Pi prompt diagnostics over SSE", async () => {
 
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("content-type"), "text/event-stream");
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://matrix-trace.pages.dev");
   const text = await res.text();
   assert.match(text, /event: agent:start/);
   assert.match(text, /event: agent:end/);
