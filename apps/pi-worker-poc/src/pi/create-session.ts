@@ -1,8 +1,9 @@
 import {
-  complete,
   getModel,
+  stream,
   type Api,
   type AssistantMessage,
+  type AssistantMessageEvent,
   type Context,
   type Message,
   type Model,
@@ -52,7 +53,7 @@ export interface PiSessionProbeResult {
 export interface LivePiSessionResult {
   session: {
     sessionId: string;
-    prompt(text: string): Promise<void>;
+    prompt(text: string, opts?: StreamLivePiSessionOptions): Promise<void>;
     dispose(): void;
     getActiveToolNames(): string[];
     readonly messages: unknown[];
@@ -242,33 +243,75 @@ async function executeToolCall(tool: TravelTool, toolCall: ToolCall): Promise<Pi
   };
 }
 
-async function runToolLoop(
+export interface StreamToolResultRow {
+  toolCallId: string;
+  toolName: string;
+  content: unknown;
+  details: unknown;
+  isError: boolean;
+}
+
+export interface StreamLivePiSessionOptions {
+  initialMessages?: PiMessage[];
+  signal?: AbortSignal;
+  onEvent?: (event: AssistantMessageEvent, turnIndex: number) => Promise<void> | void;
+  onToolResult?: (row: StreamToolResultRow) => Promise<void> | void;
+}
+
+async function runStreamLoop(
   model: Model<Api>,
   config: PiSessionConfig,
   committedMessages: PiMessage[],
   userText: string,
-  runtimeOptions: PiRuntimeOptions
+  runtimeOptions: PiRuntimeOptions,
+  streamOpts: StreamLivePiSessionOptions
 ): Promise<PiMessage[]> {
   const pendingMessages: PiMessage[] = [...committedMessages, buildUserMessage(userText)];
   const tools = config.customTools.map(toPiTool);
   const providerOptions = buildProviderOptions(model, runtimeOptions);
 
-  for (let remainingTurns = 4; remainingTurns > 0; remainingTurns -= 1) {
+  for (let turnIndex = 0, remainingTurns = 4; remainingTurns > 0; turnIndex += 1, remainingTurns -= 1) {
     const context: Context = {
       systemPrompt: config.systemPrompt,
       messages: pendingMessages,
       tools
     };
-    const assistant = await complete(model, context, providerOptions);
+    const eventStream = stream(model, context, {
+      signal: streamOpts.signal,
+      ...providerOptions
+    });
 
-    if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
-      throw new Error(assistant.errorMessage ?? "Model request failed");
+    let finalMessage: AssistantMessage | null = null;
+    let stopReason: AssistantMessage["stopReason"] = "stop";
+
+    try {
+      for await (const event of eventStream) {
+        await streamOpts.onEvent?.(event, turnIndex);
+
+        if (event.type === "error") {
+          throw new Error(event.error.errorMessage ?? "Model request failed");
+        }
+
+        if (event.type === "done") {
+          finalMessage = event.message;
+          stopReason = event.reason;
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        throw new Error("Model request aborted");
+      }
+      throw error;
     }
 
-    pendingMessages.push(assistant);
+    if (!finalMessage) {
+      throw new Error("Model stream ended without a final message");
+    }
 
-    const toolCalls = getToolCalls(assistant);
-    if (assistant.stopReason !== "toolUse" || toolCalls.length === 0) {
+    pendingMessages.push(finalMessage);
+
+    const toolCalls = getToolCalls(finalMessage);
+    if (stopReason !== "toolUse" || toolCalls.length === 0) {
       return pendingMessages;
     }
 
@@ -277,25 +320,51 @@ async function runToolLoop(
       if (!tool) {
         throw new Error(`Unknown tool requested: ${toolCall.name}`);
       }
-      pendingMessages.push(await executeToolCall(tool, toolCall));
+      const result = await executeToolCall(tool, toolCall);
+      pendingMessages.push(result);
+      if (result.role === "toolResult") {
+        await streamOpts.onToolResult?.({
+          toolCallId: result.toolCallId,
+          toolName: result.toolName,
+          content: result.content,
+          details: result.details,
+          isError: result.isError
+        });
+      }
     }
   }
 
   throw new Error("Tool loop exceeded maximum turns");
 }
 
-export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): Promise<LivePiSessionResult> {
+export async function createStreamingLivePiSession(
+  cwd: string,
+  env: PiRuntimeEnv = {},
+  opts: StreamLivePiSessionOptions = {}
+): Promise<LivePiSessionResult> {
   const config = await createPiSessionConfig(cwd);
   const runtimeOptions = createPiRuntimeOptionsFromEnv(env);
   const model = resolveSelectedModel(runtimeOptions);
-  const committedMessages: PiMessage[] = [];
+  const committedMessages: PiMessage[] = [...(opts.initialMessages ?? [])];
   const sessionId = crypto.randomUUID();
 
   return {
     session: {
       sessionId,
-      async prompt(text) {
-        const nextMessages = await runToolLoop(model, config, committedMessages, text, runtimeOptions);
+      async prompt(text, promptOpts: StreamLivePiSessionOptions = {}) {
+        const merged: StreamLivePiSessionOptions = {
+          signal: promptOpts.signal ?? opts.signal,
+          onEvent: promptOpts.onEvent ?? opts.onEvent,
+          onToolResult: promptOpts.onToolResult ?? opts.onToolResult
+        };
+        const nextMessages = await runStreamLoop(
+          model,
+          config,
+          committedMessages,
+          text,
+          runtimeOptions,
+          merged
+        );
         committedMessages.splice(0, committedMessages.length, ...nextMessages);
       },
       dispose() {},
@@ -305,6 +374,10 @@ export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): 
       }
     }
   };
+}
+
+export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): Promise<LivePiSessionResult> {
+  return createStreamingLivePiSession(cwd, env, {});
 }
 
 export async function probePiSessionCreation(cwd: string, env: PiRuntimeEnv = {}): Promise<PiSessionProbeResult> {

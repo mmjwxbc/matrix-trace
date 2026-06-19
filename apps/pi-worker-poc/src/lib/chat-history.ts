@@ -1,3 +1,4 @@
+import type { Message as PiMessage } from "@earendil-works/pi-ai";
 import type { Env } from "../env.ts";
 
 export type ChatRole = "user" | "assistant" | "system" | "tool";
@@ -129,4 +130,106 @@ export async function listConversations(env: Env, limit = 50): Promise<ChatConve
      LIMIT ?1`
   ).bind(limit).all<ChatConversationSummary>();
   return result.results ?? [];
+}
+
+export interface PersistMessageRowInput {
+  role: ChatRole;
+  content: unknown;
+  contentText?: string;
+  meta?: Record<string, unknown>;
+}
+
+export async function persistMessageRow(
+  env: Env,
+  conversationId: string,
+  row: PersistMessageRowInput
+): Promise<{ seq: number } | null> {
+  if (!env.CHAT_DB) return null;
+  const now = Date.now();
+  ensureConversation(env, conversationId, now);
+
+  const lastSeqRow = await env.CHAT_DB.prepare(
+    `SELECT COALESCE(MAX(seq), 0) AS max_seq
+     FROM messages
+     WHERE conversation_id = ?1`
+  ).bind(conversationId).first<{ max_seq: number }>();
+  const seq = (lastSeqRow?.max_seq ?? 0) + 1;
+
+  const contentJson = JSON.stringify(row.content ?? null);
+  const contentText =
+    row.contentText ?? (typeof row.content === "string" ? row.content : "");
+  const metaJson = JSON.stringify(row.meta ?? {});
+
+  const statements: D1PreparedStatement[] = [
+    env.CHAT_DB.prepare(
+      `INSERT INTO messages (id, conversation_id, seq, role, content_json, content_text, meta_json, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
+    ).bind(
+      crypto.randomUUID(),
+      conversationId,
+      seq,
+      row.role,
+      contentJson,
+      contentText,
+      metaJson,
+      now
+    ),
+    env.CHAT_DB.prepare(
+      `UPDATE conversations
+       SET updated_at = ?1,
+           last_message = ?2,
+           message_count = message_count + 1
+       WHERE id = ?3`
+    ).bind(now, contentText || row.role, conversationId)
+  ];
+
+  await env.CHAT_DB.batch(statements);
+  return { seq };
+}
+
+function safeParse<T>(json: string | null | undefined, fallback: T): T {
+  if (!json) return fallback;
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function rowToPiMessage(row: ChatMessageRow): PiMessage | null {
+  const ts = row.created_at;
+  if (row.role === "user") {
+    return {
+      role: "user",
+      content: row.content_text,
+      timestamp: ts
+    };
+  }
+  if (row.role === "assistant") {
+    const text = row.content_text || "";
+    return {
+      role: "assistant",
+      content: text ? [{ type: "text", text }] : [],
+      api: "openai-completions",
+      provider: "openai",
+      model: "unknown",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "stop",
+      timestamp: ts
+    };
+  }
+  if (row.role === "tool") {
+    const meta = safeParse<Record<string, unknown>>(row.meta_json, {});
+    const content = safeParse<unknown>(row.content_json, []);
+    return {
+      role: "toolResult",
+      toolCallId: typeof meta.toolCallId === "string" ? meta.toolCallId : "",
+      toolName: typeof meta.toolName === "string" ? meta.toolName : "",
+      content: Array.isArray(content) ? (content as never) : [],
+      details: meta.details,
+      isError: meta.isError === true,
+      timestamp: ts
+    };
+  }
+  return null;
 }

@@ -1,7 +1,7 @@
 import type { Env } from "./env.ts";
 import { SessionDurableObject } from "./durable/session-do.ts";
 import { SessionRegistryDurableObject } from "./durable/session-registry-do.ts";
-import { buildSingleEventStream } from "./routes/stream.ts";
+import { proxyChatStream } from "./routes/stream.ts";
 import { handleCreateSession, handleDeleteSession, handleGetSession, handleListMessages, handleListSessions, handlePrompt } from "./routes/sessions.ts";
 
 export { SessionDurableObject };
@@ -81,9 +81,7 @@ export default {
           response = new Response("Not Found", { status: 404 });
         } else {
           const body = (await request.json()) as { message: string; mode?: string; lat?: number; lng?: number };
-          response = new Response(await buildSingleEventStream(env, sessionId, body), {
-            headers: { "content-type": "text/event-stream" }
-          });
+          response = await proxyChatStream(env, sessionId, body);
         }
       } else if (request.method === "POST" && url.pathname.endsWith("/chat")) {
         const sessionId = url.pathname.split("/")[3];

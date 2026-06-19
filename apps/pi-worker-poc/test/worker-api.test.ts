@@ -304,7 +304,5 @@ test("worker stream route emits Pi prompt diagnostics over SSE", async () => {
   const text = await res.text();
   assert.match(text, /event: agent:start/);
   assert.match(text, /event: agent:end/);
-  assert.match(text, /stream hello/);
   assert.match(text, /No API key|No models available/);
-  assert.match(text, /final_state/);
 });

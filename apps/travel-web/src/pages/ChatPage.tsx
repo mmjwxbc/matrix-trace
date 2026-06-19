@@ -20,7 +20,6 @@ export function ChatPage() {
   const { mode: agentMode, activeSessionId, create, sessions, isLoading, isDraftSession } = useSessions();
   const { connect, disconnect } = useSSE();
   const isStreaming = useChatStore((s) => s.isStreaming);
-  const addUserMessage = useChatStore((s) => s.addUserMessage);
   const flushTurnsToMessages = useChatStore((s) => s.flushTurnsToMessages);
   const clearChat = useChatStore((s) => s.clearChat);
   const hydrateFromAgentState = useChatStore((s) => s.hydrateFromAgentState);
@@ -93,7 +92,6 @@ export function ChatPage() {
         }
 
         flushTurnsToMessages();
-        addUserMessage(message);
 
         const userLocation = useSessionStore.getState().userLocation;
         const body: Record<string, unknown> = { message, mode: mode || "prompt" };
@@ -107,7 +105,7 @@ export function ChatPage() {
         setContextOpen(false);
       }
     },
-    [agentMode, addUserMessage, connect, create, flushTurnsToMessages, isDraftSession, isStreaming, navigate]
+    [agentMode, connect, create, flushTurnsToMessages, isDraftSession, isStreaming, navigate]
   );
 
   return (
