@@ -23,12 +23,16 @@ Set these in the Cloudflare dashboard for the Worker:
 
 Set only the provider you actually use.
 
-Optional secrets / vars for proxies and explicit model selection:
+Optional plain-text vars for proxies and explicit model selection:
 
 - `OPENAI_BASE_URL`
 - `ANTHROPIC_BASE_URL`
 - `PI_MODEL_PROVIDER`
 - `PI_MODEL_ID`
+
+When deploying with `wrangler deploy --env production`, plain-text vars must be listed under
+`env.production.vars` in `wrangler.jsonc`. Dashboard-only vars can be removed by a later Wrangler
+deployment because Wrangler syncs the configured Worker bindings from the local config.
 
 Examples:
 

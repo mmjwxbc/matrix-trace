@@ -12,6 +12,9 @@
   },
   "vars": {
     "APP_ENV": "production",
+    "OPENAI_BASE_URL": "https://api.deepseek.com",
+    "PI_MODEL_PROVIDER": "custom-openai",
+    "PI_MODEL_ID": "deepseek-v4-flash",
     "PI_SESSION_NAMESPACE": "pi-worker-poc"
   },
   "d1_databases": [
@@ -78,6 +81,9 @@
       },
       "vars": {
         "APP_ENV": "production",
+        "OPENAI_BASE_URL": "https://api.deepseek.com",
+        "PI_MODEL_PROVIDER": "custom-openai",
+        "PI_MODEL_ID": "deepseek-v4-flash",
         "PI_SESSION_NAMESPACE": "pi-worker-poc"
       }
     }
