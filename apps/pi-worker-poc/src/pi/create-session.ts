@@ -7,11 +7,17 @@ import {
   createAgentSession,
   createExtensionRuntime,
   DefaultResourceLoader,
-  getAgentDir,
   ModelRegistry,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+
+// Hardcoded agent dir avoids importing `getAgentDir` from pi-coding-agent's
+// top-level re-exports, which would pull in `dist/config.js` and break the
+// Workers bundle (config.js executes `fileURLToPath(import.meta.url)` at
+// module top-level, and import.meta.url is undefined when esbuild inlines
+// the module into the Worker).
+const AGENT_DIR = "/tmp/pi-agent";
 
 export interface PiSessionConfig {
   cwd: string;
@@ -152,12 +158,14 @@ export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): 
   const runtimeOptions = createPiRuntimeOptionsFromEnv(env);
 
   // Mirrors examples/sdk/12-full-control.ts:
-  // - AuthStorage.create() defaults to ~/.pi/agent/auth.json but we inject keys via setRuntimeApiKey
-  //   so nothing is persisted to disk in the Workers runtime.
-  // - ModelRegistry.create() loads built-in models; provider base-url overrides are applied after.
-  // - DefaultResourceLoader discovers skills/extensions/prompts/themes from cwd + agentDir;
-  //   we override getSystemPrompt to inject our travel prompt.
-  const authStorage = AuthStorage.create();
+  // - AuthStorage.inMemory() avoids pulling in dist/config.js (which executes
+  //   `fileURLToPath(import.meta.url)` at module top-level and breaks the
+  //   Workers bundle). Keys are injected via setRuntimeApiKey, never persisted.
+  // - ModelRegistry.create() loads built-in models; provider base-url overrides
+  //   are applied after.
+  // - DefaultResourceLoader discovers skills/extensions/prompts/themes from
+  //   cwd + agentDir; we override getSystemPrompt to inject our travel prompt.
+  const authStorage = AuthStorage.inMemory();
   applyRuntimeApiKeys(authStorage, runtimeOptions.auth);
 
   const modelRegistry = ModelRegistry.create(authStorage);
@@ -171,7 +179,7 @@ export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): 
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: config.cwd,
-    agentDir: getAgentDir(),
+    agentDir: AGENT_DIR,
     systemPromptOverride: () => config.systemPrompt
   });
   await resourceLoader.reload();
@@ -180,7 +188,7 @@ export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): 
 
   const { session } = await createAgentSession({
     cwd: config.cwd,
-    agentDir: getAgentDir(),
+    agentDir: AGENT_DIR,
     model: selectedModel,
     authStorage,
     modelRegistry,
