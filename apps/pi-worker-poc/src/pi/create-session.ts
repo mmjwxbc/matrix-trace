@@ -17,6 +17,9 @@ type TravelTool = ReturnType<typeof createTravelHelloTool>;
 type ToolCredentials = { type: "api_key"; key: string };
 type PiMessage = Message;
 
+const CUSTOM_OPENAI_PROVIDERS = new Set(["custom-openai", "deepseek"]);
+const OPENAI_TEMPLATE_MODEL_ID = "gpt-4.1";
+
 const DEFAULT_MODEL_BY_PROVIDER = {
   anthropic: "claude-sonnet-4-5",
   openai: "gpt-5-mini",
@@ -117,10 +120,27 @@ export async function probePiSdk(): Promise<PiSdkProbeResult> {
 }
 
 function pickProvider(runtimeOptions: PiRuntimeOptions): keyof typeof DEFAULT_MODEL_BY_PROVIDER {
-  if (runtimeOptions.modelSelection?.provider === "openai" || runtimeOptions.auth.openai) {
+  const configuredProvider = normalizeProvider(runtimeOptions.modelSelection?.provider);
+  if (configuredProvider === "openai" || isCustomOpenAiProvider(configuredProvider) || runtimeOptions.auth.openai) {
     return "openai";
   }
   return "anthropic";
+}
+
+function isCustomOpenAiProvider(provider: string | undefined): boolean {
+  return provider != null && CUSTOM_OPENAI_PROVIDERS.has(provider);
+}
+
+function normalizeProvider(provider: string | undefined): string | undefined {
+  return provider?.trim().toLowerCase();
+}
+
+function normalizeModelId(modelId: string | undefined): string | undefined {
+  return modelId?.trim();
+}
+
+function normalizeBaseUrl(baseUrl: string | undefined): string | undefined {
+  return baseUrl?.trim();
 }
 
 function cloneModel(model: Model<Api>): Model<Api> {
@@ -131,15 +151,42 @@ function cloneModel(model: Model<Api>): Model<Api> {
   };
 }
 
+function buildCustomOpenAiModel(runtimeOptions: PiRuntimeOptions, configuredModelId: string): Model<Api> {
+  const baseUrl = normalizeBaseUrl(runtimeOptions.providerOverrides.openai?.baseUrl);
+  if (!baseUrl) {
+    throw new Error("Missing OPENAI_BASE_URL for custom-openai provider");
+  }
+
+  const template = getModel("openai", OPENAI_TEMPLATE_MODEL_ID) as Model<Api> | undefined;
+  if (!template) {
+    throw new Error(`Missing OpenAI template model: ${OPENAI_TEMPLATE_MODEL_ID}`);
+  }
+
+  const selected = cloneModel(template);
+  selected.id = configuredModelId;
+  selected.name = configuredModelId;
+  selected.baseUrl = baseUrl;
+  return selected;
+}
+
 function resolveSelectedModel(runtimeOptions: PiRuntimeOptions): Model<Api> {
   const provider = pickProvider(runtimeOptions);
-  const configuredProvider = runtimeOptions.modelSelection?.provider ?? provider;
+  const configuredProvider = normalizeProvider(runtimeOptions.modelSelection?.provider) ?? provider;
   const configuredModelId =
-    runtimeOptions.modelSelection?.modelId ??
+    normalizeModelId(runtimeOptions.modelSelection?.modelId) ??
     DEFAULT_MODEL_BY_PROVIDER[configuredProvider as keyof typeof DEFAULT_MODEL_BY_PROVIDER] ??
     DEFAULT_MODEL_BY_PROVIDER[provider];
 
-  const selected = cloneModel(getModel(configuredProvider as never, configuredModelId) as Model<Api>);
+  if (isCustomOpenAiProvider(configuredProvider)) {
+    return buildCustomOpenAiModel(runtimeOptions, configuredModelId);
+  }
+
+  const rawModel = getModel(configuredProvider as never, configuredModelId as never) as Model<Api> | undefined;
+  if (!rawModel) {
+    throw new Error(`Unknown PI model configuration: provider=${configuredProvider}, model=${configuredModelId}`);
+  }
+
+  const selected = cloneModel(rawModel);
   const override = runtimeOptions.providerOverrides[configuredProvider];
   if (override?.baseUrl) {
     selected.baseUrl = override.baseUrl;

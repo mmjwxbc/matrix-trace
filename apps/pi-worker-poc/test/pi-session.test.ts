@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createPiSessionConfig, createPiRuntimeOptionsFromEnv } from "../src/pi/create-session.ts";
+import { createPiSessionConfig, createPiRuntimeOptionsFromEnv, probePiSessionCreation } from "../src/pi/create-session.ts";
 
 test("createPiSessionConfig uses travel prompt and tool names", async () => {
   const config = await createPiSessionConfig("/virtual/project");
@@ -26,4 +26,35 @@ test("createPiRuntimeOptionsFromEnv maps provider keys and base urls", () => {
   assert.equal(options.providerOverrides.anthropic?.baseUrl, "https://anthropic-proxy.example.com");
   assert.equal(options.modelSelection?.provider, "openai");
   assert.equal(options.modelSelection?.modelId, "gpt-4.1");
+});
+
+test("probePiSessionCreation accepts custom-openai with custom model id", async () => {
+  const result = await probePiSessionCreation("/virtual/project", {
+    OPENAI_BASE_URL: "https://api.deepseek.example/v1",
+    PI_MODEL_PROVIDER: "custom-openai",
+    PI_MODEL_ID: "deepseek-chat"
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(typeof result.sessionId, "string");
+});
+
+test("probePiSessionCreation reports missing base url for custom-openai", async () => {
+  const result = await probePiSessionCreation("/virtual/project", {
+    PI_MODEL_PROVIDER: "custom-openai",
+    PI_MODEL_ID: "deepseek-chat"
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? "", /Missing OPENAI_BASE_URL/);
+});
+
+test("probePiSessionCreation reports invalid provider or model config instead of crashing", async () => {
+  const result = await probePiSessionCreation("/virtual/project", {
+    PI_MODEL_PROVIDER: "not-a-provider",
+    PI_MODEL_ID: "not-a-model"
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? "", /Unknown PI model configuration/);
 });

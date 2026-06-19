@@ -36,6 +36,13 @@ Examples:
 - `PI_MODEL_ID=gpt-4.1`
 - `OPENAI_BASE_URL=https://your-proxy.example.com/v1`
 
+DeepSeek via OpenAI-compatible endpoint:
+
+- `OPENAI_API_KEY=<your deepseek key>`
+- `OPENAI_BASE_URL=https://api.deepseek.com/v1`
+- `PI_MODEL_PROVIDER=custom-openai`
+- `PI_MODEL_ID=deepseek-chat`
+
 ## GitHub deployment in Cloudflare dashboard
 
 1. Create a new Worker from GitHub.
