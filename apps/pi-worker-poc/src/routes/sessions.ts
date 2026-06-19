@@ -40,11 +40,11 @@ async function initializeSession(stub: { fetch(request: Request): Promise<Respon
   );
 }
 
-async function getSessionState(stub: { fetch(request: Request): Promise<Response> }) {
+export async function getSessionState(stub: { fetch(request: Request): Promise<Response> }) {
   return readJson<StoredSessionState>(await stub.fetch(new Request("https://do/state")));
 }
 
-async function promptSession(stub: { fetch(request: Request): Promise<Response> }, body: PromptRequest) {
+export async function promptSession(stub: { fetch(request: Request): Promise<Response> }, body: PromptRequest) {
   return readJson<PromptResult>(
     await stub.fetch(
       new Request("https://do/prompt", {

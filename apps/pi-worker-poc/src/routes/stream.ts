@@ -2,7 +2,7 @@ import type { PromptRequest } from "../lib/state.ts";
 import { formatSseEvent } from "../lib/events.ts";
 import { toLegacyAgentState, type PromptResult, type StoredSessionState } from "../lib/legacy-state.ts";
 import type { Env } from "../env.ts";
-import { getSessionStub } from "./sessions.ts";
+import { getSessionState, getSessionStub, promptSession } from "./sessions.ts";
 
 function formatLegacySseEvent(type: string, payload: Record<string, unknown>) {
   return formatSseEvent({
@@ -16,8 +16,8 @@ function formatLegacySseEvent(type: string, payload: Record<string, unknown>) {
 
 export async function buildSingleEventStream(env: Env, sessionId: string, body: PromptRequest) {
   const stub = getSessionStub(env, sessionId);
-  const result = (await stub.prompt(body)) as PromptResult;
-  const state = (await stub.getState()) as StoredSessionState;
+  const result = (await promptSession(stub, body)) as PromptResult;
+  const state = (await getSessionState(stub)) as StoredSessionState;
   const finalState = toLegacyAgentState(state, result);
   const finalStatus = result.promptError ? "failed" : "done";
 
