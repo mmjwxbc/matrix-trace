@@ -33,6 +33,12 @@
   "env": {
     "staging": {
       "name": "matrix-trace-api-staging",
+      "durable_objects": {
+        "bindings": [
+          { "name": "SESSION_DO", "class_name": "SessionDurableObject" },
+          { "name": "SESSION_REGISTRY_DO", "class_name": "SessionRegistryDurableObject" }
+        ]
+      },
       "vars": {
         "APP_ENV": "staging",
         "PI_SESSION_NAMESPACE": "pi-worker-poc-staging"
@@ -40,6 +46,12 @@
     },
     "production": {
       "name": "matrix-trace-api",
+      "durable_objects": {
+        "bindings": [
+          { "name": "SESSION_DO", "class_name": "SessionDurableObject" },
+          { "name": "SESSION_REGISTRY_DO", "class_name": "SessionRegistryDurableObject" }
+        ]
+      },
       "vars": {
         "APP_ENV": "production",
         "PI_SESSION_NAMESPACE": "pi-worker-poc"

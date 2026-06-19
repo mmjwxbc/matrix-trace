@@ -53,53 +53,62 @@ export default {
     const url = new URL(request.url);
     const isApiRoute = url.pathname.startsWith("/api/");
 
-    if (request.method === "OPTIONS" && isApiRoute) {
-      return new Response(null, {
-        status: 204,
-        headers: buildCorsHeaders(request, env)
-      });
-    }
-
-    let response: Response;
-
-    if (request.method === "GET" && url.pathname === "/health") {
-      response = Response.json({ ok: true });
-    } else if (request.method === "POST" && url.pathname === "/api/sessions") {
-      response = await handleCreateSession(env);
-    } else if (request.method === "GET" && url.pathname === "/api/sessions") {
-      response = await handleListSessions(env);
-    } else if (request.method === "GET" && url.pathname.startsWith("/api/sessions/")) {
-      const sessionId = url.pathname.split("/")[3];
-      response = sessionId ? await handleGetSession(env, sessionId) : new Response("Not Found", { status: 404 });
-    } else if (request.method === "DELETE" && url.pathname.startsWith("/api/sessions/")) {
-      const sessionId = url.pathname.split("/")[3];
-      response = sessionId ? await handleDeleteSession(env, sessionId) : new Response("Not Found", { status: 404 });
-    } else if (request.method === "POST" && url.pathname.endsWith("/chat/stream")) {
-      const sessionId = url.pathname.split("/")[3];
-      if (!sessionId) {
-        response = new Response("Not Found", { status: 404 });
-      } else {
-        const body = (await request.json()) as { message: string; mode?: string; lat?: number; lng?: number };
-        response = new Response(await buildSingleEventStream(env, sessionId, body), {
-          headers: { "content-type": "text/event-stream" }
+    try {
+      if (request.method === "OPTIONS" && isApiRoute) {
+        return new Response(null, {
+          status: 204,
+          headers: buildCorsHeaders(request, env)
         });
       }
-    } else if (request.method === "POST" && url.pathname.endsWith("/chat")) {
-      const sessionId = url.pathname.split("/")[3];
-      if (!sessionId) {
-        response = new Response("Not Found", { status: 404 });
+
+      let response: Response;
+
+      if (request.method === "GET" && url.pathname === "/health") {
+        response = Response.json({ ok: true });
+      } else if (request.method === "POST" && url.pathname === "/api/sessions") {
+        response = await handleCreateSession(env);
+      } else if (request.method === "GET" && url.pathname === "/api/sessions") {
+        response = await handleListSessions(env);
+      } else if (request.method === "GET" && url.pathname.startsWith("/api/sessions/")) {
+        const sessionId = url.pathname.split("/")[3];
+        response = sessionId ? await handleGetSession(env, sessionId) : new Response("Not Found", { status: 404 });
+      } else if (request.method === "DELETE" && url.pathname.startsWith("/api/sessions/")) {
+        const sessionId = url.pathname.split("/")[3];
+        response = sessionId ? await handleDeleteSession(env, sessionId) : new Response("Not Found", { status: 404 });
+      } else if (request.method === "POST" && url.pathname.endsWith("/chat/stream")) {
+        const sessionId = url.pathname.split("/")[3];
+        if (!sessionId) {
+          response = new Response("Not Found", { status: 404 });
+        } else {
+          const body = (await request.json()) as { message: string; mode?: string; lat?: number; lng?: number };
+          response = new Response(await buildSingleEventStream(env, sessionId, body), {
+            headers: { "content-type": "text/event-stream" }
+          });
+        }
+      } else if (request.method === "POST" && url.pathname.endsWith("/chat")) {
+        const sessionId = url.pathname.split("/")[3];
+        if (!sessionId) {
+          response = new Response("Not Found", { status: 404 });
+        } else {
+          const body = (await request.json()) as { message: string; mode?: string; lat?: number; lng?: number };
+          response = await handlePrompt(env, sessionId, body);
+        }
       } else {
-        const body = (await request.json()) as { message: string; mode?: string; lat?: number; lng?: number };
-        response = await handlePrompt(env, sessionId, body);
+        response = new Response("Not Found", { status: 404 });
       }
-    } else {
-      response = new Response("Not Found", { status: 404 });
-    }
 
-    if (isApiRoute) {
-      return withCors(response, request, env);
-    }
+      if (isApiRoute) {
+        return withCors(response, request, env);
+      }
 
-    return response;
+      return response;
+    } catch (error) {
+      if (!isApiRoute) {
+        throw error;
+      }
+
+      const detail = error instanceof Error ? error.message : "Internal Server Error";
+      return withCors(Response.json({ detail }, { status: 500 }), request, env);
+    }
   }
 };

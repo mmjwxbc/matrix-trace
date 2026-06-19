@@ -8,10 +8,16 @@ export function createSessionId(): string {
 }
 
 export function getSessionStub(env: Env, sessionId: string) {
+  if (!env.SESSION_DO) {
+    throw new Error("Missing SESSION_DO binding");
+  }
   return env.SESSION_DO.getByName(sessionId);
 }
 
 function getRegistryStub(env: Env) {
+  if (!env.SESSION_REGISTRY_DO) {
+    throw new Error("Missing SESSION_REGISTRY_DO binding");
+  }
   return env.SESSION_REGISTRY_DO.getByName("global");
 }
 

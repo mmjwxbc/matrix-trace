@@ -110,6 +110,22 @@ test("worker adds CORS headers to api responses", async () => {
   assert.equal(res.headers.get("access-control-allow-origin"), "https://matrix-trace.pages.dev");
 });
 
+test("worker returns a cors-safe error when durable object bindings are missing", async () => {
+  const res = await worker.fetch(
+    new Request("https://example.com/api/sessions", {
+      headers: {
+        origin: "https://matrix-trace.pages.dev"
+      }
+    }),
+    {} as never
+  );
+
+  assert.equal(res.status, 500);
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://matrix-trace.pages.dev");
+  const payload = (await res.json()) as { detail: string };
+  assert.match(payload.detail, /Missing SESSION_REGISTRY_DO binding/);
+});
+
 test("worker lists and deletes sessions using the registry", async () => {
   const env = createEnv();
 
