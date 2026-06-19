@@ -1,6 +1,6 @@
 {
   "$schema": "../../tmp/pi/node_modules/wrangler/config-schema.json",
-  "name": "pi-worker-poc",
+  "name": "matrix-trace-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-18",
   "compatibility_flags": ["nodejs_compat"],
@@ -32,14 +32,14 @@
   ],
   "env": {
     "staging": {
-      "name": "pi-worker-poc-staging",
+      "name": "matrix-trace-api-staging",
       "vars": {
         "APP_ENV": "staging",
         "PI_SESSION_NAMESPACE": "pi-worker-poc-staging"
       }
     },
     "production": {
-      "name": "pi-worker-poc",
+      "name": "matrix-trace-api",
       "vars": {
         "APP_ENV": "production",
         "PI_SESSION_NAMESPACE": "pi-worker-poc"

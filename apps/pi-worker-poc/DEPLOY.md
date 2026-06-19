@@ -45,7 +45,7 @@ Examples:
 5. Build command:
 
 ```bash
-npm install && npm run typecheck
+npm run typecheck
 ```
 
 6. Deploy command:
@@ -53,6 +53,14 @@ npm install && npm run typecheck
 ```bash
 npx wrangler deploy --env production
 ```
+
+The Worker name in `wrangler.jsonc` is `matrix-trace-api`, which matches the deployed API hostname.
+
+Important:
+
+- Cloudflare already installs dependencies before running the user build command.
+- Do not run `npm install` again in the build command for this Worker project.
+- Re-running install after the platform `pnpm install --frozen-lockfile` step can break native packages such as `esbuild`.
 
 ## Staging deployment
 
