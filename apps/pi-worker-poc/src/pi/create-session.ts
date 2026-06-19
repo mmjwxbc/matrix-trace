@@ -18,7 +18,8 @@ type ToolCredentials = { type: "api_key"; key: string };
 type PiMessage = Message;
 
 const CUSTOM_OPENAI_PROVIDERS = new Set(["custom-openai", "deepseek"]);
-const OPENAI_TEMPLATE_MODEL_ID = "gpt-4.1";
+const OPENAI_COMPAT_TEMPLATE_PROVIDER = "deepseek";
+const OPENAI_COMPAT_TEMPLATE_MODEL_ID = "deepseek-v4-flash";
 
 const DEFAULT_MODEL_BY_PROVIDER = {
   anthropic: "claude-sonnet-4-5",
@@ -43,6 +44,9 @@ export interface PiSessionProbeResult {
   error?: string;
   fallback?: string | null;
   sessionId?: string;
+  modelApi?: string;
+  modelProvider?: string;
+  modelBaseUrl?: string;
 }
 
 export interface LivePiSessionResult {
@@ -140,7 +144,11 @@ function normalizeModelId(modelId: string | undefined): string | undefined {
 }
 
 function normalizeBaseUrl(baseUrl: string | undefined): string | undefined {
-  return baseUrl?.trim();
+  const trimmed = baseUrl?.trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.replace(/\/(?:chat\/completions|responses)$/i, "");
 }
 
 function cloneModel(model: Model<Api>): Model<Api> {
@@ -157,9 +165,11 @@ function buildCustomOpenAiModel(runtimeOptions: PiRuntimeOptions, configuredMode
     throw new Error("Missing OPENAI_BASE_URL for custom-openai provider");
   }
 
-  const template = getModel("openai", OPENAI_TEMPLATE_MODEL_ID) as Model<Api> | undefined;
+  const template = getModel(OPENAI_COMPAT_TEMPLATE_PROVIDER, OPENAI_COMPAT_TEMPLATE_MODEL_ID) as Model<Api> | undefined;
   if (!template) {
-    throw new Error(`Missing OpenAI template model: ${OPENAI_TEMPLATE_MODEL_ID}`);
+    throw new Error(
+      `Missing OpenAI-compatible template model: ${OPENAI_COMPAT_TEMPLATE_PROVIDER}/${OPENAI_COMPAT_TEMPLATE_MODEL_ID}`
+    );
   }
 
   const selected = cloneModel(template);
@@ -195,7 +205,7 @@ function resolveSelectedModel(runtimeOptions: PiRuntimeOptions): Model<Api> {
 }
 
 function buildProviderOptions(model: Model<Api>, runtimeOptions: PiRuntimeOptions): Record<string, unknown> {
-  const auth = runtimeOptions.auth[model.provider];
+  const auth = runtimeOptions.auth[model.provider] ?? (model.provider === "deepseek" ? runtimeOptions.auth.openai : undefined);
   return auth ? { apiKey: auth.key } : {};
 }
 
@@ -299,11 +309,16 @@ export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): 
 
 export async function probePiSessionCreation(cwd: string, env: PiRuntimeEnv = {}): Promise<PiSessionProbeResult> {
   try {
+    const runtimeOptions = createPiRuntimeOptionsFromEnv(env);
+    const model = resolveSelectedModel(runtimeOptions);
     const { session } = await createLivePiSession(cwd, env);
     const result: PiSessionProbeResult = {
       ok: true,
       fallback: null,
-      sessionId: session.sessionId
+      sessionId: session.sessionId,
+      modelApi: model.api,
+      modelProvider: model.provider,
+      modelBaseUrl: model.baseUrl
     };
     session.dispose();
     return result;

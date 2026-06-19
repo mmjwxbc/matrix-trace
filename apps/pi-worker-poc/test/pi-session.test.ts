@@ -37,6 +37,21 @@ test("probePiSessionCreation accepts custom-openai with custom model id", async 
 
   assert.equal(result.ok, true);
   assert.equal(typeof result.sessionId, "string");
+  assert.equal(result.modelApi, "openai-completions");
+  assert.equal(result.modelProvider, "deepseek");
+  assert.equal(result.modelBaseUrl, "https://api.deepseek.example/v1");
+});
+
+test("probePiSessionCreation normalizes custom-openai endpoint urls", async () => {
+  const result = await probePiSessionCreation("/virtual/project", {
+    OPENAI_BASE_URL: " https://api.deepseek.com/v1/chat/completions/ ",
+    PI_MODEL_PROVIDER: "custom-openai",
+    PI_MODEL_ID: "deepseek-chat"
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.modelApi, "openai-completions");
+  assert.equal(result.modelBaseUrl, "https://api.deepseek.com/v1");
 });
 
 test("probePiSessionCreation reports missing base url for custom-openai", async () => {
