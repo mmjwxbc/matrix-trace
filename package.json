@@ -3,6 +3,8 @@
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "scripts": {
+    "web:dev": "pnpm --filter @matrix-trace/travel-web dev",
+    "web:typecheck": "pnpm --filter @matrix-trace/travel-web typecheck",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
   }

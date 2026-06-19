@@ -1,6 +1,10 @@
 .DS_Store
 .npm-cache/
+.pnpm-store/
 node_modules/
 .wrangler/
+dist/
+.env.local
+apps/travel-web/package-lock.json
 
 tmp/
