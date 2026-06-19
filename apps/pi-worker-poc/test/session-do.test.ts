@@ -22,7 +22,7 @@ test("SessionDurableObject initializes Pi SDK diagnostics", async () => {
   assert.equal(state.initialized, true);
   assert.equal(state.sdkLoaded, true);
   assert.equal(state.piSessionCreated, true);
-  assert.deepEqual(state.toolNames, ["read", "travel_hello"]);
+  assert.deepEqual(state.toolNames, ["travel_hello"]);
 });
 
 test("SessionDurableObject prompt uses a live Pi session and surfaces SDK errors", async () => {

@@ -46,7 +46,7 @@ export async function createPiSessionConfig(cwd: string): Promise<PiSessionConfi
   return {
     cwd,
     systemPrompt: buildTravelSystemPrompt(),
-    toolNames: ["read", "travel_hello"],
+    toolNames: ["travel_hello"],
     customTools: [createTravelHelloTool()]
   };
 }
@@ -103,11 +103,27 @@ export async function probePiSdk(): Promise<PiSdkProbeResult> {
 
 export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): Promise<LivePiSessionResult> {
   const sdk = await loadPiSdk();
-  const { AuthStorage, ModelRegistry, SessionManager, SettingsManager, createAgentSession } = sdk;
+  const { AuthStorage, ModelRegistry, SessionManager, SettingsManager, createAgentSession, createExtensionRuntime } = sdk;
   const config = await createPiSessionConfig(cwd);
   const runtimeOptions = createPiRuntimeOptionsFromEnv(env);
   const authStorage = AuthStorage.inMemory(runtimeOptions.auth);
   const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const settingsManager = SettingsManager.inMemory({
+    compaction: { enabled: false },
+    retry: { enabled: false }
+  });
+
+  const resourceLoader = {
+    getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getPrompts: () => ({ prompts: [], diagnostics: [] }),
+    getThemes: () => ({ themes: [], diagnostics: [] }),
+    getAgentsFiles: () => ({ agentsFiles: [] }),
+    getSystemPrompt: () => config.systemPrompt,
+    getAppendSystemPrompt: () => [],
+    extendResources: () => {},
+    reload: async () => {}
+  };
 
   for (const [providerName, override] of Object.entries(runtimeOptions.providerOverrides)) {
     modelRegistry.registerProvider(providerName, override);
@@ -124,15 +140,14 @@ export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): 
 
   return createAgentSession({
     cwd: config.cwd,
+    agentDir: "/tmp/pi-agent",
     authStorage,
     modelRegistry,
     model: selectedModel as never,
     sessionManager: SessionManager.inMemory(config.cwd),
-    settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
-      retry: { enabled: false }
-    }),
-    tools: ["read"],
+    settingsManager,
+    resourceLoader,
+    tools: [],
     customTools: config.customTools
   });
 }
