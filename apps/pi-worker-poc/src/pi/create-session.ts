@@ -2,22 +2,30 @@ import { buildTravelSystemPrompt } from "./prompt-loader.ts";
 import { createTravelHelloTool } from "../tools/travel-hello.ts";
 import type { PiRuntimeEnv } from "../env.ts";
 import { getModel, type Api, type Model } from "@earendil-works/pi-ai";
-import {
-  AuthStorage,
-  createAgentSession,
-  createExtensionRuntime,
-  DefaultResourceLoader,
-  ModelRegistry,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
 
-// Hardcoded agent dir avoids importing `getAgentDir` from pi-coding-agent's
-// top-level re-exports, which would pull in `dist/config.js` and break the
-// Workers bundle (config.js executes `fileURLToPath(import.meta.url)` at
-// module top-level, and import.meta.url is undefined when esbuild inlines
-// the module into the Worker).
+// Hardcoded agent dir avoids depending on pi-coding-agent's config helpers.
+// The SDK itself is lazy-loaded below so the Worker bundle doesn't evaluate
+// `dist/config.js` during module initialization.
 const AGENT_DIR = "/tmp/pi-agent";
+
+type PiCodingAgentModule = typeof import("@earendil-works/pi-coding-agent");
+
+let piCodingAgentModulePromise: Promise<PiCodingAgentModule> | null = null;
+
+async function loadPiCodingAgent(): Promise<PiCodingAgentModule> {
+  piCodingAgentModulePromise ??= import("@earendil-works/pi-coding-agent");
+  return piCodingAgentModulePromise;
+}
+
+interface PiAuthStorageLike {
+  setRuntimeApiKey(provider: string, key: string): void;
+}
+
+interface PiModelRegistryLike {
+  registerProvider(providerName: string, override: { baseUrl: string }): void;
+  find(providerName: string, modelId: string): Model<Api> | undefined;
+  getAll(): Model<Api>[];
+}
 
 export interface PiSessionConfig {
   cwd: string;
@@ -101,15 +109,11 @@ export function createPiRuntimeOptionsFromEnv(env: PiRuntimeEnv): PiRuntimeOptio
 
 export async function probePiSdk(): Promise<PiSdkProbeResult> {
   try {
+    const piSdk = await loadPiCodingAgent();
     return {
       ok: true,
-      exportKeys: [
-        "AuthStorage",
-        "ModelRegistry",
-        "SessionManager",
-        "SettingsManager",
-        "createAgentSession"
-      ]
+      exportKeys: ["AuthStorage", "ModelRegistry", "SessionManager", "SettingsManager", "createAgentSession"]
+        .filter((key) => key in piSdk)
     };
   } catch (error) {
     return {
@@ -119,7 +123,7 @@ export async function probePiSdk(): Promise<PiSdkProbeResult> {
   }
 }
 
-function applyProviderOverrides(registry: ModelRegistry, overrides: PiRuntimeOptions["providerOverrides"]): void {
+function applyProviderOverrides(registry: PiModelRegistryLike, overrides: PiRuntimeOptions["providerOverrides"]): void {
   for (const [providerName, override] of Object.entries(overrides)) {
     try {
       registry.registerProvider(providerName, override);
@@ -130,7 +134,7 @@ function applyProviderOverrides(registry: ModelRegistry, overrides: PiRuntimeOpt
 }
 
 function resolveSelectedModel(
-  registry: ModelRegistry,
+  registry: PiModelRegistryLike,
   selection: PiRuntimeOptions["modelSelection"]
 ): Model<Api> | undefined {
   if (selection?.provider && selection.modelId) {
@@ -145,7 +149,7 @@ function resolveSelectedModel(
   return registry.getAll()[0] ?? (getModel("anthropic", "claude-sonnet-4-5") as Model<Api> | undefined);
 }
 
-function applyRuntimeApiKeys(authStorage: AuthStorage, auth: PiRuntimeOptions["auth"]): void {
+function applyRuntimeApiKeys(authStorage: PiAuthStorageLike, auth: PiRuntimeOptions["auth"]): void {
   for (const [provider, cred] of Object.entries(auth)) {
     if (cred.type === "api_key") {
       authStorage.setRuntimeApiKey(provider, cred.key);
@@ -156,11 +160,19 @@ function applyRuntimeApiKeys(authStorage: AuthStorage, auth: PiRuntimeOptions["a
 export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): Promise<LivePiSessionResult> {
   const config = await createPiSessionConfig(cwd);
   const runtimeOptions = createPiRuntimeOptionsFromEnv(env);
+  const {
+    AuthStorage,
+    createAgentSession,
+    DefaultResourceLoader,
+    ModelRegistry,
+    SessionManager,
+    SettingsManager
+  } = await loadPiCodingAgent();
 
   // Mirrors examples/sdk/12-full-control.ts:
-  // - AuthStorage.inMemory() avoids pulling in dist/config.js (which executes
-  //   `fileURLToPath(import.meta.url)` at module top-level and breaks the
-  //   Workers bundle). Keys are injected via setRuntimeApiKey, never persisted.
+  // - The SDK is loaded lazily so the Worker module does not evaluate
+  //   pi-coding-agent's top-level config helpers during deploy validation.
+  // - AuthStorage.inMemory() keeps credentials in memory only.
   // - ModelRegistry.create() loads built-in models; provider base-url overrides
   //   are applied after.
   // - DefaultResourceLoader discovers skills/extensions/prompts/themes from
