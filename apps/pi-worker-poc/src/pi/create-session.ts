@@ -1,37 +1,32 @@
+import {
+  complete,
+  getModel,
+  type Api,
+  type AssistantMessage,
+  type Context,
+  type Message,
+  type Model,
+  type Tool,
+  type ToolCall,
+} from "@earendil-works/pi-ai";
 import { buildTravelSystemPrompt } from "./prompt-loader.ts";
 import { createTravelHelloTool } from "../tools/travel-hello.ts";
 import type { PiRuntimeEnv } from "../env.ts";
-import { getModel, type Api, type Model } from "@earendil-works/pi-ai";
 
-// Hardcoded agent dir avoids depending on pi-coding-agent's config helpers.
-// The SDK itself is lazy-loaded below so the Worker bundle doesn't evaluate
-// `dist/config.js` during module initialization.
-const AGENT_DIR = "/tmp/pi-agent";
+type TravelTool = ReturnType<typeof createTravelHelloTool>;
+type ToolCredentials = { type: "api_key"; key: string };
+type PiMessage = Message;
 
-type PiCodingAgentModule = typeof import("@earendil-works/pi-coding-agent");
-
-let piCodingAgentModulePromise: Promise<PiCodingAgentModule> | null = null;
-
-async function loadPiCodingAgent(): Promise<PiCodingAgentModule> {
-  piCodingAgentModulePromise ??= import("@earendil-works/pi-coding-agent");
-  return piCodingAgentModulePromise;
-}
-
-interface PiAuthStorageLike {
-  setRuntimeApiKey(provider: string, key: string): void;
-}
-
-interface PiModelRegistryLike {
-  registerProvider(providerName: string, override: { baseUrl: string }): void;
-  find(providerName: string, modelId: string): Model<Api> | undefined;
-  getAll(): Model<Api>[];
-}
+const DEFAULT_MODEL_BY_PROVIDER = {
+  anthropic: "claude-sonnet-4-5",
+  openai: "gpt-5-mini",
+} as const;
 
 export interface PiSessionConfig {
   cwd: string;
   systemPrompt: string;
   toolNames: string[];
-  customTools: ReturnType<typeof createTravelHelloTool>[];
+  customTools: TravelTool[];
 }
 
 export interface PiSdkProbeResult {
@@ -59,7 +54,7 @@ export interface LivePiSessionResult {
 }
 
 export interface PiRuntimeOptions {
-  auth: Record<string, { type: "api_key"; key: string }>;
+  auth: Record<string, ToolCredentials>;
   providerOverrides: Record<string, { baseUrl: string }>;
   modelSelection?: {
     provider?: string;
@@ -109,11 +104,9 @@ export function createPiRuntimeOptionsFromEnv(env: PiRuntimeEnv): PiRuntimeOptio
 
 export async function probePiSdk(): Promise<PiSdkProbeResult> {
   try {
-    const piSdk = await loadPiCodingAgent();
     return {
       ok: true,
-      exportKeys: ["AuthStorage", "ModelRegistry", "SessionManager", "SettingsManager", "createAgentSession"]
-        .filter((key) => key in piSdk)
+      exportKeys: ["complete", "getModel"]
     };
   } catch (error) {
     return {
@@ -123,102 +116,135 @@ export async function probePiSdk(): Promise<PiSdkProbeResult> {
   }
 }
 
-function applyProviderOverrides(registry: PiModelRegistryLike, overrides: PiRuntimeOptions["providerOverrides"]): void {
-  for (const [providerName, override] of Object.entries(overrides)) {
-    try {
-      registry.registerProvider(providerName, override);
-    } catch {
-      // Built-in provider — override via setRuntimeApiKey + baseUrl on the model instead.
-    }
+function pickProvider(runtimeOptions: PiRuntimeOptions): keyof typeof DEFAULT_MODEL_BY_PROVIDER {
+  if (runtimeOptions.modelSelection?.provider === "openai" || runtimeOptions.auth.openai) {
+    return "openai";
   }
+  return "anthropic";
 }
 
-function resolveSelectedModel(
-  registry: PiModelRegistryLike,
-  selection: PiRuntimeOptions["modelSelection"]
-): Model<Api> | undefined {
-  if (selection?.provider && selection.modelId) {
-    const exact = registry.find(selection.provider, selection.modelId);
-    if (exact) return exact;
-  }
-  if (selection?.provider) {
-    const all = registry.getAll();
-    const match = all.find((m) => m.provider === selection.provider);
-    if (match) return match;
-  }
-  return registry.getAll()[0] ?? (getModel("anthropic", "claude-sonnet-4-5") as Model<Api> | undefined);
+function cloneModel(model: Model<Api>): Model<Api> {
+  return {
+    ...model,
+    headers: model.headers ? { ...model.headers } : undefined,
+    compat: model.compat ? { ...model.compat } : undefined
+  };
 }
 
-function applyRuntimeApiKeys(authStorage: PiAuthStorageLike, auth: PiRuntimeOptions["auth"]): void {
-  for (const [provider, cred] of Object.entries(auth)) {
-    if (cred.type === "api_key") {
-      authStorage.setRuntimeApiKey(provider, cred.key);
+function resolveSelectedModel(runtimeOptions: PiRuntimeOptions): Model<Api> {
+  const provider = pickProvider(runtimeOptions);
+  const configuredProvider = runtimeOptions.modelSelection?.provider ?? provider;
+  const configuredModelId =
+    runtimeOptions.modelSelection?.modelId ??
+    DEFAULT_MODEL_BY_PROVIDER[configuredProvider as keyof typeof DEFAULT_MODEL_BY_PROVIDER] ??
+    DEFAULT_MODEL_BY_PROVIDER[provider];
+
+  const selected = cloneModel(getModel(configuredProvider as never, configuredModelId) as Model<Api>);
+  const override = runtimeOptions.providerOverrides[configuredProvider];
+  if (override?.baseUrl) {
+    selected.baseUrl = override.baseUrl;
+  }
+  return selected;
+}
+
+function buildProviderOptions(model: Model<Api>, runtimeOptions: PiRuntimeOptions): Record<string, unknown> {
+  const auth = runtimeOptions.auth[model.provider];
+  return auth ? { apiKey: auth.key } : {};
+}
+
+function toPiTool(tool: TravelTool): Tool {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters as Tool["parameters"]
+  };
+}
+
+function buildUserMessage(text: string): PiMessage {
+  return {
+    role: "user",
+    content: text,
+    timestamp: Date.now()
+  };
+}
+
+function getToolCalls(message: AssistantMessage): ToolCall[] {
+  return message.content.filter((block): block is ToolCall => block.type === "toolCall");
+}
+
+async function executeToolCall(tool: TravelTool, toolCall: ToolCall): Promise<PiMessage> {
+  const result = await tool.execute(toolCall.id, toolCall.arguments as never);
+  return {
+    role: "toolResult",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    content: result.content,
+    details: result.details,
+    isError: false,
+    timestamp: Date.now()
+  };
+}
+
+async function runToolLoop(
+  model: Model<Api>,
+  config: PiSessionConfig,
+  committedMessages: PiMessage[],
+  userText: string,
+  runtimeOptions: PiRuntimeOptions
+): Promise<PiMessage[]> {
+  const pendingMessages: PiMessage[] = [...committedMessages, buildUserMessage(userText)];
+  const tools = config.customTools.map(toPiTool);
+  const providerOptions = buildProviderOptions(model, runtimeOptions);
+
+  for (let remainingTurns = 4; remainingTurns > 0; remainingTurns -= 1) {
+    const context: Context = {
+      systemPrompt: config.systemPrompt,
+      messages: pendingMessages,
+      tools
+    };
+    const assistant = await complete(model, context, providerOptions);
+
+    if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
+      throw new Error(assistant.errorMessage ?? "Model request failed");
+    }
+
+    pendingMessages.push(assistant);
+
+    const toolCalls = getToolCalls(assistant);
+    if (assistant.stopReason !== "toolUse" || toolCalls.length === 0) {
+      return pendingMessages;
+    }
+
+    for (const toolCall of toolCalls) {
+      const tool = config.customTools.find((candidate) => candidate.name === toolCall.name);
+      if (!tool) {
+        throw new Error(`Unknown tool requested: ${toolCall.name}`);
+      }
+      pendingMessages.push(await executeToolCall(tool, toolCall));
     }
   }
+
+  throw new Error("Tool loop exceeded maximum turns");
 }
 
 export async function createLivePiSession(cwd: string, env: PiRuntimeEnv = {}): Promise<LivePiSessionResult> {
   const config = await createPiSessionConfig(cwd);
   const runtimeOptions = createPiRuntimeOptionsFromEnv(env);
-  const {
-    AuthStorage,
-    createAgentSession,
-    DefaultResourceLoader,
-    ModelRegistry,
-    SessionManager,
-    SettingsManager
-  } = await loadPiCodingAgent();
-
-  // Mirrors examples/sdk/12-full-control.ts:
-  // - The SDK is loaded lazily so the Worker module does not evaluate
-  //   pi-coding-agent's top-level config helpers during deploy validation.
-  // - AuthStorage.inMemory() keeps credentials in memory only.
-  // - ModelRegistry.create() loads built-in models; provider base-url overrides
-  //   are applied after.
-  // - DefaultResourceLoader discovers skills/extensions/prompts/themes from
-  //   cwd + agentDir; we override getSystemPrompt to inject our travel prompt.
-  const authStorage = AuthStorage.inMemory();
-  applyRuntimeApiKeys(authStorage, runtimeOptions.auth);
-
-  const modelRegistry = ModelRegistry.create(authStorage);
-  applyProviderOverrides(modelRegistry, runtimeOptions.providerOverrides);
-
-  const settingsManager = SettingsManager.create(cwd);
-  settingsManager.applyOverrides({
-    compaction: { enabled: false },
-    retry: { enabled: false }
-  });
-
-  const resourceLoader = new DefaultResourceLoader({
-    cwd: config.cwd,
-    agentDir: AGENT_DIR,
-    systemPromptOverride: () => config.systemPrompt
-  });
-  await resourceLoader.reload();
-
-  const selectedModel = resolveSelectedModel(modelRegistry, runtimeOptions.modelSelection);
-
-  const { session } = await createAgentSession({
-    cwd: config.cwd,
-    agentDir: AGENT_DIR,
-    model: selectedModel,
-    authStorage,
-    modelRegistry,
-    settingsManager,
-    resourceLoader,
-    tools: [],
-    customTools: config.customTools,
-    sessionManager: SessionManager.inMemory(config.cwd)
-  });
+  const model = resolveSelectedModel(runtimeOptions);
+  const committedMessages: PiMessage[] = [];
+  const sessionId = crypto.randomUUID();
 
   return {
     session: {
-      sessionId: session.sessionId,
-      prompt: (text) => session.prompt(text),
-      dispose: () => session.dispose(),
+      sessionId,
+      async prompt(text) {
+        const nextMessages = await runToolLoop(model, config, committedMessages, text, runtimeOptions);
+        committedMessages.splice(0, committedMessages.length, ...nextMessages);
+      },
+      dispose() {},
       getActiveToolNames: () => config.toolNames,
       get messages() {
-        return session.state.messages;
+        return committedMessages;
       }
     }
   };

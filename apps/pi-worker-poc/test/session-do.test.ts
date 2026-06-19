@@ -35,7 +35,7 @@ test("SessionDurableObject prompt uses a live Pi session and surfaces SDK errors
   assert.equal(result.usedPiSdk, true);
   assert.equal(result.piSessionCreated, true);
   assert.equal(result.promptAttempted, true);
-  assert.match(result.promptError ?? "", /No API key found|No models available/);
+  assert.match(result.promptError ?? "", /No API key|No models available/);
   assert.equal(result.messageCount, 0);
   assert.equal(result.lastMessage, "hello from test");
 });

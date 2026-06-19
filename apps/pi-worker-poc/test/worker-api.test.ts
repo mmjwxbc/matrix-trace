@@ -273,16 +273,16 @@ test("worker prompt route uses the Pi session and returns prompt diagnostics", a
   assert.equal(payload.state.diagnostics.used_pi_sdk, true);
   assert.equal(payload.state.diagnostics.pi_session_created, true);
   assert.equal(payload.state.diagnostics.prompt_attempted, true);
-  assert.match(payload.state.diagnostics.prompt_error ?? "", /No API key found|No models available/);
+  assert.match(payload.state.diagnostics.prompt_error ?? "", /No API key|No models available/);
   assert.equal(Array.isArray(payload.state.conversation.messages), true);
   assert.equal(payload.state.conversation.messages[0]?.role, "user");
   assert.equal(payload.state.conversation.messages[1]?.role, "assistant");
   assert.equal(payload.state.turns.length, 1);
   assert.equal(payload.state.turns[0]?.status, "failed");
   assert.equal(payload.state.turns[0]?.user_message, "hello");
-  assert.match(payload.state.turns[0]?.assistant_message ?? "", /No API key found|No models available/);
+  assert.match(payload.state.turns[0]?.assistant_message ?? "", /No API key|No models available/);
   assert.equal(payload.state.errors.length, 1);
-  assert.match(payload.state.errors[0] ?? "", /No API key found|No models available/);
+  assert.match(payload.state.errors[0] ?? "", /No API key|No models available/);
 });
 
 test("worker stream route emits Pi prompt diagnostics over SSE", async () => {
@@ -305,6 +305,6 @@ test("worker stream route emits Pi prompt diagnostics over SSE", async () => {
   assert.match(text, /event: agent:start/);
   assert.match(text, /event: agent:end/);
   assert.match(text, /stream hello/);
-  assert.match(text, /No API key found|No models available/);
+  assert.match(text, /No API key|No models available/);
   assert.match(text, /final_state/);
 });
